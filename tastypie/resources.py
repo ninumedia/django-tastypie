@@ -1259,31 +1259,63 @@ class Resource(object):
         ``Meta.always_return_data = True``, return ``HttpAccepted`` (202
         Accepted).
         """
-        deserialized = self.deserialize(request, request.raw_post_data, format=request.META.get('CONTENT_TYPE', 'application/json'))
-        deserialized = self.alter_deserialized_detail_data(request, deserialized)
-        bundle = self.build_bundle(data=dict_strip_unicode_keys(deserialized), request=request)
+        logger.debug('running patched put_detail')
+        deserialized = self.deserialize(
+            request, request.raw_post_data,
+            format=request.META.get('CONTENT_TYPE', 'application/json'))
+        deserialized = self.alter_deserialized_detail_data(
+            request,
+            deserialized)
+        bundle = self.build_bundle(
+            data=dict_strip_unicode_keys(deserialized),
+            request=request)
+        try:
+            obj = self.cached_obj_get(
+                request=request,
+                **self.remove_api_resource_names(kwargs))
+        except ObjectDoesNotExist:
+            return http.HttpNotFound()
+        except MultipleObjectsReturned:
+            return http.HttpMultipleChoices(
+                "More than one resource is found at this URI.")
+        bundle.obj = obj
         self.is_valid(bundle, request)
         self.authorized_update_detail(self.get_object_list(request), bundle)
-
         try:
-            updated_bundle = self.obj_update(bundle, request=request, **self.remove_api_resource_names(kwargs))
+            updated_bundle = self.obj_update(
+                bundle, request=request,
+                **self.remove_api_resource_names(kwargs))
 
             if not self._meta.always_return_data:
                 return http.HttpNoContent()
             else:
                 updated_bundle = self.full_dehydrate(updated_bundle)
-                updated_bundle = self.alter_detail_data_to_serialize(request, updated_bundle)
-                return self.create_response(request, updated_bundle, response_class=http.HttpAccepted)
+                updated_bundle = self.alter_detail_data_to_serialize(
+                    request,
+                    updated_bundle)
+                return self.create_response(
+                    request,
+                    updated_bundle,
+                    response_class=http.HttpAccepted)
         except (NotFound, MultipleObjectsReturned):
-            updated_bundle = self.obj_create(bundle, request=request, **self.remove_api_resource_names(kwargs))
+            updated_bundle = self.obj_create(
+                bundle,
+                request=request,
+                **self.remove_api_resource_names(kwargs))
             location = self.get_resource_uri(updated_bundle)
 
             if not self._meta.always_return_data:
                 return http.HttpCreated(location=location)
             else:
                 updated_bundle = self.full_dehydrate(updated_bundle)
-                updated_bundle = self.alter_detail_data_to_serialize(request, updated_bundle)
-                return self.create_response(request, updated_bundle, response_class=http.HttpCreated, location=location)
+                updated_bundle = self.alter_detail_data_to_serialize(
+                    request,
+                    updated_bundle)
+                return self.create_response(
+                    request,
+                    updated_bundle,
+                    response_class=http.HttpCreated,
+                    location=location)
 
     def delete_list(self, request, **kwargs):
         """
@@ -1301,19 +1333,23 @@ class Resource(object):
         return http.HttpNoContent()
 
     def delete_detail(self, request, **kwargs):
-        """
-        Destroys a single resource/object.
-
-        Calls ``obj_delete``.
-
-        If the resource is deleted, return ``HttpNoContent`` (204 No Content).
-        If the resource did not exist, return ``Http404`` (404 Not Found).
-        """
+        logger.debug('using delete_detail')
+        try:
+            obj = self.cached_obj_get(
+                request=request,
+                **self.remove_api_resource_names(kwargs))
+        except ObjectDoesNotExist:
+            return http.HttpNotFound()
+        except MultipleObjectsReturned:
+            return http.HttpMultipleChoices(
+                "More than one resource is found at this URI.")
         bundle = self.build_bundle(request=request)
+        bundle.obj = obj
         self.authorized_delete_detail(self.get_object_list(request), bundle)
 
         try:
-            self.obj_delete(request=request, **self.remove_api_resource_names(kwargs))
+            self.obj_delete(request=request,
+                **self.remove_api_resource_names(kwargs))
             return http.HttpNoContent()
         except NotFound:
             return http.HttpNotFound()
@@ -1582,29 +1618,24 @@ class ModelResource(Resource):
         Django type.
         """
         result = default
+        internal_type = f.get_internal_type()
 
-        if f.get_internal_type() in ('DateField', 'DateTimeField'):
+        if internal_type == 'DateTimeField':
             result = fields.DateTimeField
-        elif f.get_internal_type() in ('BooleanField', 'NullBooleanField'):
+        elif internal_type == 'DateField':
+            result = fields.DateField
+        elif internal_type in ('BooleanField', 'NullBooleanField'):
             result = fields.BooleanField
-        elif f.get_internal_type() in ('FloatField',):
+        elif internal_type in ('FloatField',):
             result = fields.FloatField
-        elif f.get_internal_type() in ('DecimalField',):
+        elif internal_type in ('DecimalField',):
             result = fields.DecimalField
-        elif f.get_internal_type() in ('IntegerField', 'PositiveIntegerField', 'PositiveSmallIntegerField', 'SmallIntegerField'):
+        elif internal_type in ('IntegerField', 'PositiveIntegerField', 'PositiveSmallIntegerField', 'SmallIntegerField', 'AutoField'):
             result = fields.IntegerField
-        elif f.get_internal_type() in ('FileField', 'ImageField'):
+        elif internal_type in ('FileField', 'ImageField'):
             result = fields.FileField
-        elif f.get_internal_type() == 'TimeField':
+        elif internal_type == 'TimeField':
             result = fields.TimeField
-        # TODO: Perhaps enable these via introspection. The reason they're not enabled
-        #       by default is the very different ``__init__`` they have over
-        #       the other fields.
-        # elif f.get_internal_type() == 'ForeignKey':
-        #     result = ForeignKey
-        # elif f.get_internal_type() == 'ManyToManyField':
-        #     result = ManyToManyField
-
         return result
 
     @classmethod
