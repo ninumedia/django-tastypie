@@ -1259,7 +1259,6 @@ class Resource(object):
         ``Meta.always_return_data = True``, return ``HttpAccepted`` (202
         Accepted).
         """
-        logger.debug('running patched put_detail')
         deserialized = self.deserialize(
             request, request.raw_post_data,
             format=request.META.get('CONTENT_TYPE', 'application/json'))
@@ -1333,7 +1332,6 @@ class Resource(object):
         return http.HttpNoContent()
 
     def delete_detail(self, request, **kwargs):
-        logger.debug('using delete_detail')
         try:
             obj = self.cached_obj_get(
                 request=request,
