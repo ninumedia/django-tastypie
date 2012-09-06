@@ -2033,7 +2033,7 @@ class ModelResource(Resource):
             self.error_response(bundle.errors, request)
         return self.save(bundle)
 
-    def obj_update(self, bundle, request=None, **kwargs):
+    def obj_update(self, bundle, request=None, skip_errors=False, **kwargs):
         """
         A ORM-specific implementation of ``obj_update``.
         """
