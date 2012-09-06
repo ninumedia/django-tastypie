@@ -848,6 +848,7 @@ class Resource(object):
         bundle = self.hydrate(bundle)
         for field_name, field_object in self.fields.items():
             if field_object.readonly is True:
+                bundle.data[field_name] = None
                 continue
 
             # Check for an optional method to do further hydration.
