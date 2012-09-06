@@ -762,6 +762,22 @@ class Resource(object):
         except NoReverseMatch:
             return ''
 
+    def get_resource_list_uri(self):
+        """
+        Returns a URL specific to this resource's list endpoint.
+        """
+        kwargs = {
+            'resource_name': self._meta.resource_name,
+        }
+
+        if self._meta.api_name is not None:
+            kwargs['api_name'] = self._meta.api_name
+
+        try:
+            return self._build_reverse_url("api_dispatch_list", kwargs=kwargs)
+        except NoReverseMatch:
+            return None
+
     def get_via_uri(self, uri, request=None):
         """
         This pulls apart the salient bits of the URI and populates the
@@ -1189,7 +1205,7 @@ class Resource(object):
         objects = self.authorized_read_list(objects, self.build_bundle(request=request))
         sorted_objects = self.apply_sorting(objects, options=request.GET)
 
-        paginator = self._meta.paginator_class(request.GET, sorted_objects, resource_uri=self.get_resource_uri(), limit=self._meta.limit, max_limit=self._meta.max_limit, collection_name=self._meta.collection_name)
+        paginator = self._meta.paginator_class(request.GET, sorted_objects, resource_uri=self.get_resource_list_uri(), limit=self._meta.limit, max_limit=self._meta.max_limit, collection_name=self._meta.collection_name)
         to_be_serialized = paginator.page()
 
         # Dehydrate the bundles in preparation for serialization.
