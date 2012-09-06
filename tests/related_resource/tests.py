@@ -1,226 +1,512 @@
+import time
+from urlparse import urlparse
 from django.conf import settings
-from django.contrib.auth.models import User
 from django.test import TestCase
-from django.utils import simplejson as json
-from core.models import Note, MediaBit
-from core.tests.resources import HttpRequest
-from core.tests.mocks import MockRequest
-from tastypie import fields
-from related_resource.api.resources import FreshNoteResource, CategoryResource
-from related_resource.api.urls import api
-from related_resource.models import Category, Tag, Taggable, TaggableTag, ExtraData
+from django.test.client import FakePayload, Client
+from tastypie.serializers import Serializer
 
 
-class RelatedResourceTest(TestCase):
-    urls = 'related_resource.api.urls'
+class TestApiClient(object):
+    def __init__(self, serializer=None):
+        """
+        Sets up a fresh ``TestApiClient`` instance.
 
-    def setUp(self):
-        super(RelatedResourceTest, self).setUp()
-        self.user = User.objects.create(username="testy_mctesterson")
+        If you are employing a custom serializer, you can pass the class to the
+        ``serializer=`` kwarg.
+        """
+        self.client = Client()
+        self.serializer = serializer
 
-    def test_cannot_access_user_resource(self):
-        resource = api.canonical_resource_for('users')
-        request = MockRequest()
-        request.GET = {'format': 'json'}
-        request.method = 'PUT'
-        request.raw_post_data = '{"username": "foobar"}'
-        resp = resource.wrap_view('dispatch_detail')(request, pk=self.user.pk)
+        if not self.serializer:
+            self.serializer = Serializer()
 
-        self.assertEqual(resp.status_code, 405)
-        self.assertEqual(User.objects.get(id=self.user.id).username, self.user.username)
+    def get_content_type(self, short_format):
+        """
+        Given a short name (such as ``json`` or ``xml``), returns the full content-type
+        for it (``application/json`` or ``application/xml`` in this case).
+        """
+        return self.serializer.content_types.get(short_format, 'json')
 
-    def test_related_resource_authorization(self):
-        resource = api.canonical_resource_for('notes')
+    def get(self, uri, format='json', data=None, authentication=None, **kwargs):
+        """
+        Performs a simulated ``GET`` request to the provided URI.
 
-        request = MockRequest()
-        request.GET = {'format': 'json'}
-        request.method = 'POST'
-        request.raw_post_data = '{"content": "The cat is back. The dog coughed him up out back.", "created": "2010-04-03 20:05:00", "is_active": true, "slug": "cat-is-back", "title": "The Cat Is Back", "updated": "2010-04-03 20:05:00", "author": null}'
+        Optionally accepts a ``data`` kwarg, which in the case of ``GET``, lets you
+        send along ``GET`` parameters. This is useful when testing filtering or other
+        things that read off the ``GET`` params. Example::
 
-        resp = resource.post_list(request)
-        self.assertEqual(resp.status_code, 201)
-        self.assertEqual(User.objects.get(id=self.user.id).username, 'testy_mctesterson')
+            from tastypie.test import TestApiClient
+            client = TestApiClient()
 
-        request = MockRequest()
-        request.GET = {'format': 'json'}
-        request.method = 'POST'
-        request.raw_post_data = '{"content": "The cat is back. The dog coughed him up out back.", "created": "2010-04-03 20:05:00", "is_active": true, "slug": "cat-is-back-2", "title": "The Cat Is Back", "updated": "2010-04-03 20:05:00", "author": {"id": %s, "username": "foobar"}}' % self.user.id
+            response = client.get('/api/v1/entry/1/', data={'format': 'json', 'title__startswith': 'a', 'limit': 20, 'offset': 60})
 
-        resp = resource.post_list(request)
-        self.assertEqual(resp.status_code, 201)
-        self.assertEqual(User.objects.get(id=self.user.id).username, 'foobar')
+        Optionally accepts an ``authentication`` kwarg, which should be an HTTP header
+        with the correct authentication data already setup.
 
+        All other ``**kwargs`` passed in get passed through to the Django
+        ``TestClient``. See https://docs.djangoproject.com/en/dev/topics/testing/#module-django.test.client
+        for details.
+        """
+        content_type = self.get_content_type(format)
+        kwargs['HTTP_ACCEPT'] = content_type
 
-class CategoryResourceTest(TestCase):
-    urls = 'related_resource.api.urls'
+        # GET & DELETE are the only times we don't serialize the data.
+        if data is not None:
+            kwargs['data'] = data
 
-    def setUp(self):
-        super(CategoryResourceTest, self).setUp()
-        self.parent_cat_1 = Category.objects.create(parent=None, name='Dad')
-        self.parent_cat_2 = Category.objects.create(parent=None, name='Mom')
-        self.child_cat_1 = Category.objects.create(parent=self.parent_cat_1, name='Son')
-        self.child_cat_2 = Category.objects.create(parent=self.parent_cat_2, name='Daughter')
+        if authentication is not None:
+            kwargs['HTTP_AUTHORIZATION'] = authentication
 
-    def test_correct_relation(self):
-        resource = api.canonical_resource_for('category')
-        request = MockRequest()
-        request.GET = {'format': 'json'}
-        request.method = 'GET'
-        resp = resource.wrap_view('dispatch_detail')(request, pk=self.parent_cat_1.pk)
+        return self.client.get(uri, **kwargs)
 
-        self.assertEqual(resp.status_code, 200)
-        data = json.loads(resp.content)
-        self.assertEqual(data['parent'], None)
-        self.assertEqual(data['name'], 'Dad')
+    def post(self, uri, format='json', data=None, authentication=None, **kwargs):
+        """
+        Performs a simulated ``POST`` request to the provided URI.
 
-        # Now try a child.
-        resp = resource.wrap_view('dispatch_detail')(request, pk=self.child_cat_2.pk)
+        Optionally accepts a ``data`` kwarg. **Unlike** ``GET``, in ``POST`` the
+        ``data`` gets serialized & sent as the body instead of becoming part of the URI.
+        Example::
 
-        self.assertEqual(resp.status_code, 200)
-        data = json.loads(resp.content)
-        self.assertEqual(data['parent'], '/v1/category/2/')
-        self.assertEqual(data['name'], 'Daughter')
+            from tastypie.test import TestApiClient
+            client = TestApiClient()
 
-    def test_put_null(self):
-        resource = api.canonical_resource_for('category')
-        request = MockRequest()
-        request.GET = {'format': 'json'}
-        request.method = 'PUT'
-        request.raw_post_data = '{"parent": null, "name": "Son"}'
+            response = client.post('/api/v1/entry/', data={
+                'created': '2012-05-01T20:02:36',
+                'slug': 'another-post',
+                'title': 'Another Post',
+                'user': '/api/v1/user/1/',
+            })
 
-        # Before the PUT, there should be a parent.
-        self.assertEqual(Category.objects.get(pk=self.child_cat_1.pk).parent.pk, self.parent_cat_1.pk)
+        Optionally accepts an ``authentication`` kwarg, which should be an HTTP header
+        with the correct authentication data already setup.
 
-        # After the PUT, the parent should be ``None``.
-        resp = resource.put_detail(request, pk=self.child_cat_1.pk)
-        self.assertEqual(resp.status_code, 204)
-        self.assertEqual(Category.objects.get(pk=self.child_cat_1.pk).name, 'Son')
-        self.assertEqual(Category.objects.get(pk=self.child_cat_1.pk).parent, None)
+        All other ``**kwargs`` passed in get passed through to the Django
+        ``TestClient``. See https://docs.djangoproject.com/en/dev/topics/testing/#module-django.test.client
+        for details.
+        """
+        content_type = self.get_content_type(format)
+        kwargs['content_type'] = content_type
 
+        if data is not None:
+            kwargs['data'] = self.serializer.serialize(data, format=content_type)
 
-class ExplicitM2MResourceRegressionTest(TestCase):
-    urls = 'related_resource.api.urls'
+        if authentication is not None:
+            kwargs['HTTP_AUTHORIZATION'] = authentication
 
-    def setUp(self):
-        super(ExplicitM2MResourceRegressionTest, self).setUp()
-        self.tag_1 = Tag.objects.create(name='important')
-        self.taggable_1 = Taggable.objects.create(name='exam')
+        return self.client.post(uri, **kwargs)
 
-        # Create relations between tags and taggables through the explicit m2m table
-        self.taggabletag_1 = TaggableTag.objects.create(tag=self.tag_1, taggable=self.taggable_1)
+    def put(self, uri, format='json', data=None, authentication=None, **kwargs):
+        """
+        Performs a simulated ``PUT`` request to the provided URI.
 
-        # Give each tag some extra data (the lookup of this data is what makes the test fail)
-        self.extradata_1 = ExtraData.objects.create(tag=self.tag_1, name='additional')
+        Optionally accepts a ``data`` kwarg. **Unlike** ``GET``, in ``PUT`` the
+        ``data`` gets serialized & sent as the body instead of becoming part of the URI.
+        Example::
 
-    def test_correct_setup(self):
-        request = MockRequest()
-        request.GET = {'format': 'json'}
-        request.method = 'GET'
+            from tastypie.test import TestApiClient
+            client = TestApiClient()
 
-        # Verify the explicit 'through' relationships has been created correctly
-        resource = api.canonical_resource_for('taggabletag')
-        resp = resource.wrap_view('dispatch_detail')(request, pk=self.taggabletag_1.pk)
-        data = json.loads(resp.content)
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(data['tag'], '/v1/tag/1/')
-        self.assertEqual(data['taggable'], '/v1/taggable/1/')
+            response = client.put('/api/v1/entry/1/', data={
+                'created': '2012-05-01T20:02:36',
+                'slug': 'another-post',
+                'title': 'Another Post',
+                'user': '/api/v1/user/1/',
+            })
 
-        resource = api.canonical_resource_for('taggable')
-        resp = resource.wrap_view('dispatch_detail')(request, pk=self.taggable_1.pk)
-        data = json.loads(resp.content)
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(data['name'], 'exam')
+        Optionally accepts an ``authentication`` kwarg, which should be an HTTP header
+        with the correct authentication data already setup.
 
-        resource = api.canonical_resource_for('tag')
-        resp = resource.wrap_view('dispatch_detail')(request, pk=self.tag_1.pk)
-        data = json.loads(resp.content)
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(data['name'], 'important')
+        All other ``**kwargs`` passed in get passed through to the Django
+        ``TestClient``. See https://docs.djangoproject.com/en/dev/topics/testing/#module-django.test.client
+        for details.
+        """
+        content_type = self.get_content_type(format)
+        kwargs['content_type'] = content_type
 
-        # and check whether the extradata is present
-        self.assertEqual(data['extradata']['name'], u'additional')
+        if data is not None:
+            kwargs['data'] = self.serializer.serialize(data, format=content_type)
 
+        if authentication is not None:
+            kwargs['HTTP_AUTHORIZATION'] = authentication
 
-    def test_post_new_tag(self):
-        resource = api.canonical_resource_for('tag')
-        request = MockRequest()
-        request.GET = {'format': 'json'}
-        request.method = 'POST'
-        request.raw_post_data = '{"name": "school", "taggabletags": [ ]}'
+        return self.client.put(uri, **kwargs)
 
-        # Prior to the addition of ``blank=True``, this would
-        # fail badly.
-        resp = resource.wrap_view('dispatch_list')(request)
-        self.assertEqual(resp.status_code, 201)
+    def patch(self, uri, format='json', data=None, authentication=None, **kwargs):
+        """
+        Performs a simulated ``PATCH`` request to the provided URI.
 
-        # GET the created object (through its headers.location)
-        self.assertTrue(resp.has_header('location'))
-        location = resp['Location']
+        Optionally accepts a ``data`` kwarg. **Unlike** ``GET``, in ``PATCH`` the
+        ``data`` gets serialized & sent as the body instead of becoming part of the URI.
+        Example::
 
-        resp = self.client.get(location, data={'format': 'json'})
-        self.assertEqual(resp.status_code, 200)
-        deserialized = json.loads(resp.content)
-        self.assertEqual(len(deserialized), 5)
-        self.assertEqual(deserialized['name'], 'school')
+            from tastypie.test import TestApiClient
+            client = TestApiClient()
 
+            response = client.patch('/api/v1/entry/1/', data={
+                'created': '2012-05-01T20:02:36',
+                'slug': 'another-post',
+                'title': 'Another Post',
+                'user': '/api/v1/user/1/',
+            })
 
-class OneToManySetupTestCase(TestCase):
-    urls = 'related_resource.api.urls'
+        Optionally accepts an ``authentication`` kwarg, which should be an HTTP header
+        with the correct authentication data already setup.
 
-    def test_one_to_many(self):
-        # Sanity checks.
-        self.assertEqual(Note.objects.count(), 2)
-        self.assertEqual(MediaBit.objects.count(), 0)
+        All other ``**kwargs`` passed in get passed through to the Django
+        ``TestClient``. See https://docs.djangoproject.com/en/dev/topics/testing/#module-django.test.client
+        for details.
+        """
+        content_type = self.get_content_type(format)
+        kwargs['content_type'] = content_type
 
-        fnr = FreshNoteResource()
+        if data is not None:
+            kwargs['data'] = self.serializer.serialize(data, format=content_type)
 
-        data = {
-            'title': 'Create with related URIs',
-            'slug': 'create-with-related-uris',
-            'content': 'Some content here',
-            'is_active': True,
-            'media_bits': [
-                {
-                    'title': 'Picture #1'
-                }
-            ]
+        if authentication is not None:
+            kwargs['HTTP_AUTHORIZATION'] = authentication
+
+        # This hurts because Django doesn't support PATCH natively.
+        parsed = urlparse(uri)
+        r = {
+            'CONTENT_LENGTH': len(kwargs['data']),
+            'CONTENT_TYPE': content_type,
+            'PATH_INFO': self.client._get_path(parsed),
+            'QUERY_STRING': parsed[4],
+            'REQUEST_METHOD': 'PATCH',
+            'wsgi.input': FakePayload(kwargs['data']),
         }
+        r.update(kwargs)
+        return self.client.request(**r)
 
-        request = MockRequest()
-        request.GET = {'format': 'json'}
-        request.method = 'POST'
-        request.raw_post_data = json.dumps(data)
+    def delete(self, uri, format='json', data=None, authentication=None, **kwargs):
+        """
+        Performs a simulated ``DELETE`` request to the provided URI.
 
-        resp = fnr.post_list(request)
-        self.assertEqual(resp.status_code, 201)
-        self.assertEqual(Note.objects.count(), 3)
-        note = Note.objects.latest('created')
-        self.assertEqual(note.media_bits.count(), 1)
-        self.assertEqual(note.media_bits.all()[0].title, u'Picture #1')
+        Optionally accepts a ``data`` kwarg, which in the case of ``DELETE``, lets you
+        send along ``DELETE`` parameters. This is useful when testing filtering or other
+        things that read off the ``DELETE`` params. Example::
+
+            from tastypie.test import TestApiClient
+            client = TestApiClient()
+
+            response = client.delete('/api/v1/entry/1/', data={'format': 'json'})
+
+        Optionally accepts an ``authentication`` kwarg, which should be an HTTP header
+        with the correct authentication data already setup.
+
+        All other ``**kwargs`` passed in get passed through to the Django
+        ``TestClient``. See https://docs.djangoproject.com/en/dev/topics/testing/#module-django.test.client
+        for details.
+        """
+        content_type = self.get_content_type(format)
+        kwargs['content_type'] = content_type
+
+        # GET & DELETE are the only times we don't serialize the data.
+        if data is not None:
+            kwargs['data'] = data
+
+        if authentication is not None:
+            kwargs['HTTP_AUTHORIZATION'] = authentication
+
+        return self.client.delete(uri, **kwargs)
 
 
-class FullCategoryResource(CategoryResource):
-    parent = fields.ToOneField('self', 'parent', null=True, full=True)
+class ResourceTestCase(TestCase):
+    """
+    A useful base class for the start of testing Tastypie APIs.
+    """
+    def setUp(self):
+        super(ResourceTestCase, self).setUp()
+        self.serializer = Serializer()
+        self.api_client = TestApiClient()
 
+    def get_credentials(self):
+        """
+        A convenience method for the user as a way to shorten up the
+        often repetitious calls to create the same authentication.
 
-class RelatedPatchTestCase(TestCase):
-    def test_patch_to_one(self):
-        resource = FullCategoryResource()
-        cat1 = Category.objects.create(name='Dad')
-        cat2 = Category.objects.create(parent=cat1, name='Child')
+        Raises ``NotImplementedError`` by default.
 
-        request = HttpRequest()
-        request.GET = {'format': 'json'}
-        request.method = 'PATCH'
-        request._read_started = False
+        Usage::
 
-        data = {
-            'name': 'Kid'
+            class MyResourceTestCase(ResourceTestCase):
+                def get_credentials(self):
+                    return self.create_basic('daniel', 'pass')
+
+                # Then the usual tests...
+
+        """
+        raise NotImplementedError("You must return the class for your Resource to test.")
+
+    def create_basic(self, username, password):
+        """
+        Creates & returns the HTTP ``Authorization`` header for use with BASIC
+        Auth.
+        """
+        import base64
+        return 'Basic %s' % base64.b64encode(':'.join([username, password]))
+
+    def create_apikey(self, username, api_key):
+        """
+        Creates & returns the HTTP ``Authorization`` header for use with
+        ``ApiKeyAuthentication``.
+        """
+        return 'ApiKey %s:%s' % (username, api_key)
+
+    def create_digest(self, username, api_key, method, uri):
+        """
+        Creates & returns the HTTP ``Authorization`` header for use with Digest
+        Auth.
+        """
+        from tastypie.authentication import hmac, sha1, uuid, python_digest
+
+        new_uuid = uuid.uuid4()
+        opaque = hmac.new(str(new_uuid), digestmod=sha1).hexdigest()
+        return python_digest.build_authorization_request(
+            username,
+            method.upper(),
+            uri,
+            1, # nonce_count
+            digest_challenge=python_digest.build_digest_challenge(time.time(), getattr(settings, 'SECRET_KEY', ''), 'django-tastypie', opaque, False),
+            password=api_key
+        )
+
+    def create_oauth(self, user):
+        """
+        Creates & returns the HTTP ``Authorization`` header for use with Oauth.
+        """
+        from oauth_provider.models import Consumer, Token, Resource
+
+        # Necessary setup for ``oauth_provider``.
+        resource, _ = Resource.objects.get_or_create(url='test', defaults={
+            'name': 'Test Resource'
+        })
+        consumer, _ = Consumer.objects.get_or_create(key='123', defaults={
+            'name': 'Test',
+            'description': 'Testing...'
+        })
+        token, _ = Token.objects.get_or_create(key='foo', token_type=Token.ACCESS, defaults={
+            'consumer': consumer,
+            'resource': resource,
+            'secret': '',
+            'user': user,
+        })
+
+        # Then generate the header.
+        oauth_data = {
+            'oauth_consumer_key': '123',
+            'oauth_nonce': 'abc',
+            'oauth_signature': '&',
+            'oauth_signature_method': 'PLAINTEXT',
+            'oauth_timestamp': str(int(time.time())),
+            'oauth_token': 'foo',
         }
+        return 'OAuth %s' % ','.join([key+'='+value for key, value in oauth_data.items()])
 
-        request._raw_post_data = request._body = json.dumps(data)
-        self.assertEqual(cat2.name, 'Child')
-        resp = resource.patch_detail(request, pk=cat2.pk)
-        self.assertEqual(resp.status_code, 202)
-        cat2 = Category.objects.get(pk=2)
-        self.assertEqual(cat2.name, 'Kid')
+    def assertHttpOK(self, resp):
+        """
+        Ensures the response is returning a HTTP 200.
+        """
+        return self.assertEqual(resp.status_code, 200)
+
+    def assertHttpCreated(self, resp):
+        """
+        Ensures the response is returning a HTTP 201.
+        """
+        return self.assertEqual(resp.status_code, 201)
+
+    def assertHttpAccepted(self, resp):
+        """
+        Ensures the response is returning either a HTTP 202 or a HTTP 204.
+        """
+        return self.assertTrue(resp.status_code in [202, 204])
+
+    def assertHttpMultipleChoices(self, resp):
+        """
+        Ensures the response is returning a HTTP 300.
+        """
+        return self.assertEqual(resp.status_code, 300)
+
+    def assertHttpSeeOther(self, resp):
+        """
+        Ensures the response is returning a HTTP 303.
+        """
+        return self.assertEqual(resp.status_code, 303)
+
+    def assertHttpNotModified(self, resp):
+        """
+        Ensures the response is returning a HTTP 304.
+        """
+        return self.assertEqual(resp.status_code, 304)
+
+    def assertHttpBadRequest(self, resp):
+        """
+        Ensures the response is returning a HTTP 400.
+        """
+        return self.assertEqual(resp.status_code, 400)
+
+    def assertHttpUnauthorized(self, resp):
+        """
+        Ensures the response is returning a HTTP 401.
+        """
+        return self.assertEqual(resp.status_code, 401)
+
+    def assertHttpForbidden(self, resp):
+        """
+        Ensures the response is returning a HTTP 403.
+        """
+        return self.assertEqual(resp.status_code, 403)
+
+    def assertHttpNotFound(self, resp):
+        """
+        Ensures the response is returning a HTTP 404.
+        """
+        return self.assertEqual(resp.status_code, 404)
+
+    def assertHttpMethodNotAllowed(self, resp):
+        """
+        Ensures the response is returning a HTTP 405.
+        """
+        return self.assertEqual(resp.status_code, 405)
+
+    def assertHttpConflict(self, resp):
+        """
+        Ensures the response is returning a HTTP 409.
+        """
+        return self.assertEqual(resp.status_code, 409)
+
+    def assertHttpGone(self, resp):
+        """
+        Ensures the response is returning a HTTP 410.
+        """
+        return self.assertEqual(resp.status_code, 410)
+
+    def assertHttpTooManyRequests(self, resp):
+        """
+        Ensures the response is returning a HTTP 429.
+        """
+        return self.assertEqual(resp.status_code, 429)
+
+    def assertHttpApplicationError(self, resp):
+        """
+        Ensures the response is returning a HTTP 500.
+        """
+        return self.assertEqual(resp.status_code, 500)
+
+    def assertHttpNotImplemented(self, resp):
+        """
+        Ensures the response is returning a HTTP 501.
+        """
+        return self.assertEqual(resp.status_code, 501)
+
+    def assertValidJSON(self, data):
+        """
+        Given the provided ``data`` as a string, ensures that it is valid JSON &
+        can be loaded properly.
+        """
+        # Just try the load. If it throws an exception, the test case will fail.
+        self.serializer.from_json(data)
+
+    def assertValidXML(self, data):
+        """
+        Given the provided ``data`` as a string, ensures that it is valid XML &
+        can be loaded properly.
+        """
+        # Just try the load. If it throws an exception, the test case will fail.
+        self.serializer.from_xml(data)
+
+    def assertValidYAML(self, data):
+        """
+        Given the provided ``data`` as a string, ensures that it is valid YAML &
+        can be loaded properly.
+        """
+        # Just try the load. If it throws an exception, the test case will fail.
+        self.serializer.from_yaml(data)
+
+    def assertValidPlist(self, data):
+        """
+        Given the provided ``data`` as a string, ensures that it is valid
+        binary plist & can be loaded properly.
+        """
+        # Just try the load. If it throws an exception, the test case will fail.
+        self.serializer.from_plist(data)
+
+    def assertValidJSONResponse(self, resp):
+        """
+        Given a ``HttpResponse`` coming back from using the ``client``, assert that
+        you get back:
+
+        * An HTTP 200
+        * The correct content-type (``application/json``)
+        * The content is valid JSON
+        """
+        self.assertHttpOK(resp)
+        self.assertTrue(resp['Content-Type'].startswith('application/json'))
+        self.assertValidJSON(resp.content)
+
+    def assertValidXMLResponse(self, resp):
+        """
+        Given a ``HttpResponse`` coming back from using the ``client``, assert that
+        you get back:
+
+        * An HTTP 200
+        * The correct content-type (``application/xml``)
+        * The content is valid XML
+        """
+        self.assertHttpOK(resp)
+        self.assertTrue(resp['Content-Type'].startswith('application/xml'))
+        self.assertValidXML(resp.content)
+
+    def assertValidYAMLResponse(self, resp):
+        """
+        Given a ``HttpResponse`` coming back from using the ``client``, assert that
+        you get back:
+
+        * An HTTP 200
+        * The correct content-type (``text/yaml``)
+        * The content is valid YAML
+        """
+        self.assertHttpOK(resp)
+        self.assertTrue(resp['Content-Type'].startswith('text/yaml'))
+        self.assertValidYAML(resp.content)
+
+    def assertValidPlistResponse(self, resp):
+        """
+        Given a ``HttpResponse`` coming back from using the ``client``, assert that
+        you get back:
+
+        * An HTTP 200
+        * The correct content-type (``application/x-plist``)
+        * The content is valid binary plist data
+        """
+        self.assertHttpOK(resp)
+        self.assertTrue(resp['Content-Type'].startswith('application/x-plist'))
+        self.assertValidPlist(resp.content)
+
+    def deserialize(self, resp):
+        """
+        Given a ``HttpResponse`` coming back from using the ``client``, this method
+        checks the ``Content-Type`` header & attempts to deserialize the data based on
+        that.
+
+        It returns a Python datastructure (typically a ``dict``) of the serialized data.
+        """
+        return self.serializer.deserialize(resp.content, format=resp['Content-Type'])
+
+    def serialize(self, data, format='application/json'):
+        """
+        Given a Python datastructure (typically a ``dict``) & a desired content-type,
+        this method will return a serialized string of that data.
+        """
+        return self.serializer.serialize(data, format=format)
+
+    def assertKeys(self, data, expected):
+        """
+        This method ensures that the keys of the ``data`` match up to the keys of
+        ``expected``.
+
+        It covers the (extremely) common case where you want to make sure the keys of
+        a response match up to what is expected. This is typically less fragile than
+        testing the full structure, which can be prone to data changes.
+        """
+        self.assertEqual(sorted(data.keys()), sorted(expected))
