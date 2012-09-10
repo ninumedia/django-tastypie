@@ -36,8 +36,11 @@ except ImportError:
     from copy import deepcopy
 # If ``csrf_exempt`` isn't present, stub it.
 try:
-    from django.views.decorators.csrf import csrf_exempt
-except ImportError:
+    if getattr(settings, 'TASTYPIE_CSRF_EXEMPT', False):
+        from django.views.decorators.csrf import csrf_exempt
+    else:
+        raise Exception
+except Exception:
     def csrf_exempt(func):
         return func
 
