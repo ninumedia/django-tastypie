@@ -851,7 +851,8 @@ class Resource(object):
         bundle = self.hydrate(bundle)
         for field_name, field_object in self.fields.items():
             if field_object.readonly is True:
-                bundle.data[field_name] = None
+                if field_name in bundle.data:
+                    del bundle.data[field_name]
                 continue
 
             # Check for an optional method to do further hydration.
@@ -1309,6 +1310,7 @@ class Resource(object):
             # Attempt to be transactional, deleting any previously created
             # objects if validation fails.
             try:
+                bundle = self.full_hydrate(bundle)
                 self.is_valid(bundle, request)
                 self.authorized_update_detail(self.get_object_list(request), bundle)
             except ImmediateHttpResponse:
@@ -1364,6 +1366,7 @@ class Resource(object):
             return http.HttpMultipleChoices(
                 "More than one resource is found at this URI.")
         bundle.obj = obj
+        bundle = self.full_hydrate(bundle)
         self.is_valid(bundle, request)
         self.authorized_update_detail(self.get_object_list(request), bundle)
         try:
