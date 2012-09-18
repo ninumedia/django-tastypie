@@ -55,7 +55,7 @@ class FormValidation(Validation):
             if issubclass(self.form_class, ModelForm):
                 kwargs['instance'] = bundle.obj
 
-            kwargs['data'] = model_to_dict(bundle.obj)
+            #kwargs['data'] = model_to_dict(bundle.obj)
 
         kwargs['data'].update(data)
         return kwargs

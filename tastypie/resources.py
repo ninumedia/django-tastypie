@@ -910,7 +910,8 @@ class Resource(object):
                 # unmodified. It's up to the user's code to handle this.
                 # The ``ModelResource`` provides a working baseline
                 # in this regard.
-                bundle.data[field_name] = field_object.hydrate_m2m(bundle)
+                if bundle.data.get(field_name, False): # Don't add empty m2m fields to our bundle
+                    bundle.data[field_name] = field_object.hydrate_m2m(bundle)
 
         for field_name, field_object in self.fields.items():
             if not getattr(field_object, 'is_m2m', False):
@@ -2060,6 +2061,7 @@ class ModelResource(Resource):
         """
         A ORM-specific implementation of ``obj_update``.
         """
+
         if not bundle.obj or not self.get_bundle_detail_data(bundle):
             # Attempt to hydrate data from kwargs before doing a lookup for the object.
             # This step is needed so certain values (like datetime) will pass model validation.
@@ -2163,6 +2165,7 @@ class ModelResource(Resource):
 
         # Now pick up the M2M bits.
         m2m_bundle = self.hydrate_m2m(bundle)
+
         self.save_m2m(m2m_bundle)
         return bundle
 
@@ -2219,6 +2222,10 @@ class ModelResource(Resource):
         relation and recreate the related data as needed.
         """
         for field_name, field_object in self.fields.items():
+            # skip if this m2m field isn't in the bundle
+            if not bundle.data.get(field_name, False):
+                continue
+
             if not getattr(field_object, 'is_m2m', False):
                 continue
 
@@ -2240,23 +2247,26 @@ class ModelResource(Resource):
                 continue
 
             if hasattr(related_mngr, 'clear'):
-                # FIXME: Dupe the original bundle, copy in the new object &
-                #        check the perms on that (using the related resource)?
-
-                # Clear it out, just to be safe.
                 related_mngr.clear()
 
             related_objs = []
 
             for related_bundle in bundle.data[field_name]:
-                # FIXME: Dupe the original bundle, copy in the new object &
-                #        check the perms on that (usin the related resource)?
-                related_resource = field_object.get_related_resource(bundle.obj)
-                related_bundle = related_resource.build_bundle(obj=bundle.obj, request=bundle.request)
+                if not related_bundle:
+                    continue
+                kwargs = {}
+                fields = [f.attname for f in related_bundle.obj._meta.fields]
+                fields.remove('id') # use the obj.pk to reference the id
+                for field in fields:
+                    kwargs[field] = related_bundle.obj.__dict__[field]
+                if related_bundle.obj.pk:
+                    related_bundle.obj._default_manager.filter(pk=related_bundle.obj.pk).update(**kwargs)
+                else:
+                    try:
+                        related_bundle.obj = related_bundle.obj._default_manager.get(**kwargs)
+                    except ObjectDoesNotExist:
+                        related_bundle.obj.save()
 
-                # FIXME: To avoid excessive saves, we may need to pass along a
-                #        set of objects/pks seens so as not to resave.
-                related_resource.save(related_bundle)
                 related_objs.append(related_bundle.obj)
 
             related_mngr.add(*related_objs)
