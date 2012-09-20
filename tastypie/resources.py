@@ -2264,6 +2264,8 @@ class ModelResource(Resource):
                 else:
                     try:
                         related_bundle.obj = related_bundle.obj._default_manager.get(**kwargs)
+                    except MultipleObjectsReturned:
+                        related_bundle.obj = related_bundle.obj._default_manager.filter(**kwargs)[0]
                     except ObjectDoesNotExist:
                         related_bundle.obj.save()
 
