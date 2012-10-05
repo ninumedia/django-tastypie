@@ -2223,7 +2223,7 @@ class ModelResource(Resource):
         """
         for field_name, field_object in self.fields.items():
             # skip if this m2m field isn't in the bundle
-            if not bundle.data.get(field_name, False):
+            if not field_name in bundle.data:
                 continue
 
             if not getattr(field_object, 'is_m2m', False):
