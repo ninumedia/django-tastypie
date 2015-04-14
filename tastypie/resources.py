@@ -3,11 +3,12 @@ import logging
 import warnings
 import django
 from django.conf import settings
-from django.conf.urls.defaults import patterns, url
+from django.conf.urls import patterns, url
 from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned, ValidationError
 from django.core.urlresolvers import NoReverseMatch, reverse, resolve, Resolver404, get_script_prefix
 from django.db import transaction
-from django.db.models.sql.constants import QUERY_TERMS, LOOKUP_SEP
+from django.db.models.sql.constants import QUERY_TERMS
+from django.db.models.constants import LOOKUP_SEP
 from django.http import HttpResponse, HttpResponseNotFound, Http404
 from django.utils.cache import patch_cache_control
 from tastypie.authentication import Authentication
@@ -1258,7 +1259,7 @@ class Resource(object):
         If ``Meta.always_return_data = True``, there will be a populated body
         of serialized data.
         """
-        deserialized = self.deserialize(request, request.raw_post_data, format=request.META.get('CONTENT_TYPE', 'application/json'))
+        deserialized = self.deserialize(request, request.body, format=request.META.get('CONTENT_TYPE', 'application/json'))
         deserialized = self.alter_deserialized_detail_data(request, deserialized)
         bundle = self.build_bundle(data=dict_strip_unicode_keys(deserialized), request=request)
         self.is_valid(bundle, request)
@@ -1297,7 +1298,7 @@ class Resource(object):
         Return ``HttpAccepted`` (202 Accepted) if
         ``Meta.always_return_data = True``.
         """
-        deserialized = self.deserialize(request, request.raw_post_data, format=request.META.get('CONTENT_TYPE', 'application/json'))
+        deserialized = self.deserialize(request, request.body, format=request.META.get('CONTENT_TYPE', 'application/json'))
         deserialized = self.alter_deserialized_list_data(request, deserialized)
 
         if not 'objects' in deserialized:
@@ -1349,7 +1350,7 @@ class Resource(object):
         Accepted).
         """
         deserialized = self.deserialize(
-            request, request.raw_post_data,
+            request, request.body,
             format=request.META.get('CONTENT_TYPE', 'application/json'))
         deserialized = self.alter_deserialized_detail_data(
             request,
@@ -1493,7 +1494,7 @@ class Resource(object):
 
         """
         request = convert_post_to_patch(request)
-        deserialized = self.deserialize(request, request.raw_post_data, format=request.META.get('CONTENT_TYPE', 'application/json'))
+        deserialized = self.deserialize(request, request.body, format=request.META.get('CONTENT_TYPE', 'application/json'))
 
         if "objects" not in deserialized:
             raise BadRequest("Invalid data sent.")
@@ -1573,7 +1574,7 @@ class Resource(object):
         bundle = self.alter_detail_data_to_serialize(request, bundle)
 
         # Now update the bundle in-place.
-        deserialized = self.deserialize(request, request.raw_post_data, format=request.META.get('CONTENT_TYPE', 'application/json'))
+        deserialized = self.deserialize(request, request.body, format=request.META.get('CONTENT_TYPE', 'application/json'))
         self.update_in_place(request, bundle, deserialized)
 
         if not self._meta.always_return_data:
