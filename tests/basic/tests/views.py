@@ -1,7 +1,7 @@
+import json
 from django.contrib.auth.models import User
 from django.http import HttpRequest
 from django.test import TestCase, Client
-from django.utils import simplejson as json
 
 
 class ViewsTestCase(TestCase):
