@@ -268,11 +268,11 @@ values in camelCase instead::
 
             camelized_data = camelize(data)
 
-            return simplejson.dumps(camelized_data, sort_keys=True)
+            return json.dumps(camelized_data, sort_keys=True)
 
         def from_json(self, content):
             # Changes camelCase names to underscore_separated names to go from javascript convention to python convention
-            data = simplejson.loads(content)
+            data = json.loads(content)
 
             def camelToUnderscore(match):
                 return match.group()[0] + "_" + match.group()[1].lower()
@@ -301,8 +301,8 @@ By default, Tastypie outputs JSON with no indentation or newlines (equivalent to
 :py:func:`json.dumps` with *indent* set to ``None``). You can override this
 behavior in a custom serializer::
 
-    from django.core.serializers import json
-    from django.utils import simplejson
+    import json
+    from django.core.serializers import json as djson
     from tastypie.serializers import Serializer
 
     class PrettyJSONSerializer(Serializer):
@@ -311,7 +311,7 @@ behavior in a custom serializer::
         def to_json(self, data, options=None):
             options = options or {}
             data = self.to_simple(data, options)
-            return simplejson.dumps(data, cls=json.DjangoJSONEncoder,
+            return json.dumps(data, cls=djson.DjangoJSONEncoder,
                     sort_keys=True, ensure_ascii=False, indent=self.json_indent)
 
 Determining format via URL

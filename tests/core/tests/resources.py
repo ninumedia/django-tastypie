@@ -2,6 +2,7 @@ import base64
 import copy
 import datetime
 from decimal import Decimal
+import json
 import django
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -13,7 +14,6 @@ from django import forms
 from django.http import HttpRequest, QueryDict, Http404
 from django.test import TestCase
 from django.utils import dateformat
-from django.utils import simplejson as json
 from tastypie.authentication import BasicAuthentication
 from tastypie.authorization import Authorization
 from tastypie.bundle import Bundle
