@@ -2130,7 +2130,7 @@ class ModelResource(Resource):
 
         obj.delete()
 
-    @transaction.commit_on_success()
+    @transaction.atomic()
     def patch_list(self, request, **kwargs):
         """
         An ORM-specific implementation of ``patch_list``.
