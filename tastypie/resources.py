@@ -438,32 +438,35 @@ class Resource(object):
         Handles the common operations (allowed HTTP method, authentication,
         throttling, method lookup) surrounding most CRUD interactions.
         """
-        allowed_methods = getattr(self._meta, "%s_allowed_methods" % request_type, None)
+        try:
+            allowed_methods = getattr(self._meta, "%s_allowed_methods" % request_type, None)
 
-        if 'HTTP_X_HTTP_METHOD_OVERRIDE' in request.META:
-            request.method = request.META['HTTP_X_HTTP_METHOD_OVERRIDE']
+            if 'HTTP_X_HTTP_METHOD_OVERRIDE' in request.META:
+                request.method = request.META['HTTP_X_HTTP_METHOD_OVERRIDE']
 
-        request_method = self.method_check(request, allowed=allowed_methods)
-        method = getattr(self, "%s_%s" % (request_method, request_type), None)
+            request_method = self.method_check(request, allowed=allowed_methods)
+            method = getattr(self, "%s_%s" % (request_method, request_type), None)
 
-        if method is None:
-            raise ImmediateHttpResponse(response=http.HttpNotImplemented())
+            if method is None:
+                raise ImmediateHttpResponse(response=http.HttpNotImplemented())
 
-        self.is_authenticated(request)
-        self.throttle_check(request)
+            self.is_authenticated(request)
+            self.throttle_check(request)
 
-        # All clear. Process the request.
-        request = convert_post_to_put(request)
-        response = method(request, **kwargs)
+            # All clear. Process the request.
+            request = convert_post_to_put(request)
+            response = method(request, **kwargs)
 
-        # Add the throttled request.
-        self.log_throttled_access(request)
+            # Add the throttled request.
+            self.log_throttled_access(request)
 
-        # If what comes back isn't a ``HttpResponse``, assume that the
-        # request was accepted and that some action occurred. This also
-        # prevents Django from freaking out.
-        if not isinstance(response, HttpResponse):
-            return http.HttpNoContent()
+            # If what comes back isn't a ``HttpResponse``, assume that the
+            # request was accepted and that some action occurred. This also
+            # prevents Django from freaking out.
+            if not isinstance(response, HttpResponse):
+                return http.HttpNoContent()
+        except ImmediateHttpResponse as e:
+            return e.response
 
         return response
 
